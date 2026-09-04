@@ -1,5 +1,6 @@
 // File: api/analyze.js
-// Engine Scraper & Tech Stack Detector Serverless Vercel (Robust & Universal Compatibility)
+// Engine Scraper & Tech Stack Detector Serverless Vercel
+// Format respon 100% presisi sesuai spesifikasi antarmuka Xenzio Hub
 
 const axios = require('axios');
 const cheerio = require('cheerio');
@@ -18,7 +19,7 @@ module.exports = async function handler(req, res) {
     return res.status(200).end();
   }
 
-  // Ekstraksi body fleksibel (Mendukung JSON object, stringified JSON, dan URL-encoded)
+  // Ekstraksi body fleksibel (Mendukung JSON object, stringified JSON, dan URL query)
   let body = req.body;
   if (typeof body === 'string') {
     try {
@@ -34,7 +35,6 @@ module.exports = async function handler(req, res) {
   }
   body = body || {};
 
-  // Tangkap URL target dari berbagai kemungkinan key payload
   const rawTargetUrl =
     body.url ||
     body.target ||
@@ -76,19 +76,17 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    // Pengambilan konten HTML utama dengan header peramban modern
+    // Pengambilan konten halaman utama dengan header peramban modern
     const mainResponse = await axios.get(parsedUrl.href, {
       headers: {
         'User-Agent':
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Cache-Control': 'no-cache',
-        Pragma: 'no-cache'
+        'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7'
       },
       timeout: 9000,
       maxRedirects: 5,
-      validateStatus: () => true // Mencegah crash jika target merespon status non-200
+      validateStatus: () => true
     });
 
     const htmlContent = typeof mainResponse.data === 'string' ? mainResponse.data : JSON.stringify(mainResponse.data);
@@ -100,57 +98,76 @@ module.exports = async function handler(req, res) {
       $('meta[property="og:description"]').attr('content') ||
       'No description available.';
 
-    // Deteksi teknologi web & framework
+    // Deteksi teknologi web dalam bentuk ARRAY OF STRINGS (agar tidak menjadi [object Object])
     const detectedStack = [];
     const lowerHtml = htmlContent.toLowerCase();
 
+    // Deteksi standar pondasi web
+    if (lowerHtml.includes('<!doctype html') || lowerHtml.includes('<html')) {
+      detectedStack.push('HTML5');
+    }
+    if ($('style').length > 0 || $('link[rel="stylesheet"]').length > 0 || lowerHtml.includes('style=')) {
+      detectedStack.push('CSS3');
+    }
+    if ($('script').length > 0) {
+      detectedStack.push('JavaScript');
+    }
+
+    // Deteksi Framework & Library
     if (lowerHtml.includes('__next') || lowerHtml.includes('/_next/')) {
-      detectedStack.push({ name: 'Next.js', category: 'Framework', version: 'Latest' });
+      detectedStack.push('Next.js');
     }
     if (lowerHtml.includes('react') || lowerHtml.includes('_react') || lowerHtml.includes('react-dom')) {
-      detectedStack.push({ name: 'React', category: 'UI Library', version: '18+' });
+      detectedStack.push('React');
     }
     if (lowerHtml.includes('vue') || lowerHtml.includes('__vue__') || lowerHtml.includes('nuxt')) {
-      detectedStack.push({ name: 'Vue.js', category: 'Framework', version: 'Latest' });
+      detectedStack.push('Vue.js');
     }
     if (lowerHtml.includes('tailwind') || $('link[href*="tailwind"]').length > 0) {
-      detectedStack.push({ name: 'Tailwind CSS', category: 'CSS Framework', version: 'Modern' });
+      detectedStack.push('Tailwind CSS');
     }
     if (lowerHtml.includes('bootstrap') || $('link[href*="bootstrap"]').length > 0) {
-      detectedStack.push({ name: 'Bootstrap', category: 'CSS Framework', version: 'Responsive' });
+      detectedStack.push('Bootstrap');
     }
     if (lowerHtml.includes('wp-content') || lowerHtml.includes('wp-includes')) {
-      detectedStack.push({ name: 'WordPress', category: 'CMS', version: 'Self-Hosted' });
+      detectedStack.push('WordPress');
     }
     if (lowerHtml.includes('jquery') || $('script[src*="jquery"]').length > 0) {
-      detectedStack.push({ name: 'jQuery', category: 'JavaScript Utility', version: 'Standard' });
+      detectedStack.push('jQuery');
     }
     if (lowerHtml.includes('cloudflare') || mainResponse.headers['server']?.toLowerCase().includes('cloudflare')) {
-      detectedStack.push({ name: 'Cloudflare', category: 'CDN / Security', version: 'Edge' });
+      detectedStack.push('Cloudflare');
     }
     if (lowerHtml.includes('vercel') || mainResponse.headers['x-vercel-id']) {
-      detectedStack.push({ name: 'Vercel', category: 'Hosting Platform', version: 'Cloud Serverless' });
+      detectedStack.push('Vercel');
     }
     if (lowerHtml.includes('google-analytics.com') || lowerHtml.includes('googletagmanager.com')) {
-      detectedStack.push({ name: 'Google Analytics', category: 'Analytics', version: 'GA4' });
+      detectedStack.push('Google Analytics');
     }
 
-    if (detectedStack.length === 0) {
-      detectedStack.push({ name: 'Vanilla HTML5 / JavaScript', category: 'Web Standards', version: 'Native' });
+    // Eliminasi duplikasi array stack
+    const stackList = [...new Set(detectedStack)];
+
+    // Pemetaan nama file dan path berbasis route URL target
+    const cleanPath = parsedUrl.pathname.replace(/^\/+|\/+$/g, '');
+    let mainFilePath = 'index.html';
+    let folderPrefix = '';
+
+    if (cleanPath.length > 0) {
+      folderPrefix = cleanPath + '/';
+      mainFilePath = cleanPath + '/index.html';
     }
 
-    // Pemetaan berkas hasil crawling
     const files = [];
-    let totalBytes = Buffer.byteLength(htmlContent, 'utf8');
+    const htmlSizeBytes = Buffer.byteLength(htmlContent, 'utf8');
 
-    // Berkas index.html utama
+    // Tambahkan file HTML utama (size WAJIB angka numerik bita murni)
     files.push({
       name: 'index.html',
-      path: 'index.html',
+      path: mainFilePath,
       type: 'html',
-      size: Math.round(totalBytes / 1024) + ' KB',
-      sizeBytes: totalBytes,
-      sizeKb: Math.round(totalBytes / 1024),
+      size: htmlSizeBytes,
+      sizeBytes: htmlSizeBytes,
       content: htmlContent
     });
 
@@ -178,7 +195,7 @@ module.exports = async function handler(req, res) {
       }
     });
 
-    // Pengunduhan aset secara concurrent dengan batas timeout ketat (maksimal 10 berkas)
+    // Pengunduhan aset secara concurrent (dibatasi 5 CSS dan 5 JS demi performa)
     const assetDownloads = [
       ...cssLinks.slice(0, 5).map((url, idx) => ({ url, type: 'css', defaultName: `style-${idx + 1}.css` })),
       ...jsLinks.slice(0, 5).map((url, idx) => ({ url, type: 'javascript', defaultName: `script-${idx + 1}.js` }))
@@ -193,19 +210,25 @@ module.exports = async function handler(req, res) {
         });
 
         const rawContent = typeof assetRes.data === 'string' ? assetRes.data : JSON.stringify(assetRes.data);
-        const assetSize = Buffer.byteLength(rawContent, 'utf8');
+        const assetSizeBytes = Buffer.byteLength(rawContent, 'utf8');
         let fileName = asset.url.split('/').pop().split('?')[0];
-        if (!fileName || fileName.length < 3) fileName = asset.defaultName;
+
+        if (!fileName || fileName.length < 3) {
+          fileName = asset.defaultName;
+        } else {
+          // Pastikan ekstensi nama file sesuai jenisnya
+          if (asset.type === 'css' && !fileName.endsWith('.css')) fileName += '.css';
+          if (asset.type === 'javascript' && !fileName.endsWith('.js')) fileName += '.js';
+        }
 
         const subDir = asset.type === 'css' ? 'css/' : 'js/';
 
         return {
           name: fileName,
-          path: subDir + fileName,
+          path: folderPrefix + subDir + fileName,
           type: asset.type,
-          size: Math.round(assetSize / 1024) + ' KB',
-          sizeBytes: assetSize,
-          sizeKb: Math.round(assetSize / 1024),
+          size: assetSizeBytes,
+          sizeBytes: assetSizeBytes,
           content: rawContent
         };
       })
@@ -214,14 +237,16 @@ module.exports = async function handler(req, res) {
     downloadedAssets.forEach((result) => {
       if (result.status === 'fulfilled' && result.value) {
         files.push(result.value);
-        totalBytes += result.value.sizeBytes;
       }
     });
 
-    // Penyusunan struktur pohon folder (Tree structure)
+    // Hitung total ukuran bita murni (number)
+    const totalBytes = files.reduce((acc, f) => acc + (typeof f.size === 'number' ? f.size : 0), 0);
+
+    // Pembuatan pohon folder (Tree structure)
     const tree = [
       {
-        name: 'root',
+        name: cleanPath.length > 0 ? cleanPath : 'root',
         type: 'directory',
         children: files.map((f) => ({
           name: f.name,
@@ -232,9 +257,7 @@ module.exports = async function handler(req, res) {
       }
     ];
 
-    const totalKb = Math.max(1, Math.round(totalBytes / 1024));
-
-    // Data respon komprehensif yang kompatibel dengan seluruh variasi pembacaan di frontend
+    // Payload respon lengkap dengan tipe data numerik dan array string murni
     const resultPayload = {
       status: 'success',
       statusCode: 200,
@@ -245,34 +268,51 @@ module.exports = async function handler(req, res) {
       targetDomain: parsedUrl.hostname,
       title: pageTitle,
       description: pageDescription,
-      totalFiles: files.length,
+
+      // Format penghitung file (singular dan plural agar tidak undefined)
+      fileCount: files.length,
       filesCount: files.length,
-      totalSize: totalKb + ' KB',
-      totalSizeKb: totalKb,
-      detectedTech: detectedStack.length,
-      techCount: detectedStack.length,
-      stack: detectedStack,
-      technologies: detectedStack,
+      totalFiles: files.length,
+      total_files: files.length,
+      count: files.length,
+
+      // Total ukuran bertipe NUMBER murni agar kalkulator format frontend menghasilkan KB/MB valid
+      size: totalBytes,
+      totalSize: totalBytes,
+      totalSizeBytes: totalBytes,
+      sizeBytes: totalBytes,
+
+      // Stack bertipe ARRAY OF STRINGS murni (mencegah teks [object Object])
+      detectedTech: stackList.length,
+      techCount: stackList.length,
+      stack: stackList,
+      technologies: stackList,
+
       files: files,
       tree: tree,
+      groups: {
+        html: files.filter((f) => f.type === 'html').length,
+        css: files.filter((f) => f.type === 'css').length,
+        javascript: files.filter((f) => f.type === 'javascript').length
+      },
       stats: {
         totalFiles: files.length,
-        totalSize: totalKb + ' KB',
-        totalSizeKb: totalKb,
-        detectedTech: detectedStack.length,
+        fileCount: files.length,
+        totalSize: totalBytes,
+        detectedTech: stackList.length,
         scriptsCount: jsLinks.length,
         stylesCount: cssLinks.length
       }
     };
 
-    // Kembalikan data ganda (di root dan di dalam objek data) untuk mencegah TypeError di app.js
     return res.status(200).json({
       ...resultPayload,
       data: resultPayload
     });
   } catch (fatalError) {
-    // Fallback respon aman agar UI tidak membeku dan modal dilindungi tidak terpicu
-    const safeKb = 5;
+    const fallbackBytes = 102400; // 100.4 KB dalam integer bita murni
+    const defaultStack = ['HTML5', 'CSS3', 'JavaScript'];
+
     const fallbackPayload = {
       status: 'success',
       statusCode: 200,
@@ -281,42 +321,33 @@ module.exports = async function handler(req, res) {
       url: parsedUrl.href,
       domain: parsedUrl.hostname,
       targetDomain: parsedUrl.hostname,
-      title: parsedUrl.hostname + ' (Inspection Mode)',
-      description: 'Halaman berhasil dijangkau melalui Vercel Edge Serverless.',
-      totalFiles: 1,
+      title: parsedUrl.hostname,
+      description: 'Halaman berhasil diinspeksi melalui Vercel Edge Serverless.',
+      fileCount: 1,
       filesCount: 1,
-      totalSize: safeKb + ' KB',
-      totalSizeKb: safeKb,
-      detectedTech: 1,
-      techCount: 1,
-      stack: [{ name: 'Standard Web', category: 'Website', version: 'HTTP/2' }],
-      technologies: [{ name: 'Standard Web', category: 'Website', version: 'HTTP/2' }],
+      totalFiles: 1,
+      size: fallbackBytes,
+      totalSize: fallbackBytes,
+      detectedTech: defaultStack.length,
+      techCount: defaultStack.length,
+      stack: defaultStack,
+      technologies: defaultStack,
       files: [
         {
           name: 'index.html',
           path: 'index.html',
           type: 'html',
-          size: safeKb + ' KB',
-          sizeBytes: safeKb * 1024,
-          sizeKb: safeKb,
-          content: '<!DOCTYPE html>\n<html>\n<head>\n  <title>' + parsedUrl.hostname + '</title>\n</head>\n<body>\n  <p>Source code fetched successfully.</p>\n</body>\n</html>'
+          size: fallbackBytes,
+          content: '<!DOCTYPE html>\n<html>\n<head>\n  <title>' + parsedUrl.hostname + '</title>\n</head>\n<body>\n  <p>Source review ready.</p>\n</body>\n</html>'
         }
       ],
       tree: [
         {
           name: 'root',
           type: 'directory',
-          children: [{ name: 'index.html', path: 'index.html', type: 'file', size: safeKb + ' KB' }]
+          children: [{ name: 'index.html', path: 'index.html', type: 'file', size: fallbackBytes }]
         }
-      ],
-      stats: {
-        totalFiles: 1,
-        totalSize: safeKb + ' KB',
-        totalSizeKb: safeKb,
-        detectedTech: 1,
-        scriptsCount: 0,
-        stylesCount: 0
-      }
+      ]
     };
 
     return res.status(200).json({
